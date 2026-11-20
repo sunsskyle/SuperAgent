@@ -71,7 +71,7 @@ public class ProviderModelFetcher {
         return switch (providerKey) {
             case "codex" -> fetchCodex(credential);
             case "claude" -> fetchClaude(credential);
-            case "deepseek", "glm", "kimi", "qwen" -> fetchVendor(providerKey, credential);
+            case "deepseek", "glm", "kimi", "qwen", "grok" -> fetchVendor(providerKey, credential);
             default -> throw new IOException("Model listing is not available for " + providerKey + " yet");
         };
     }
@@ -91,7 +91,8 @@ public class ProviderModelFetcher {
         List<ProviderModelDto> out = new ArrayList<>();
         for (JsonNode m : mapper.readTree(resp.body()).path("data")) {
             String id = m.path("id").asText("");
-            if (!id.isBlank() && !NON_CHAT.matcher(id).find()) {
+            if (!id.isBlank() && !NON_CHAT.matcher(id).find()
+                    && (!"grok".equals(providerKey) || !(id.startsWith("grok-imagine") || id.startsWith("grok-voice")))) {
                 out.add(new ProviderModelDto(id, null, List.of(), null, "none", null, true));
             }
         }

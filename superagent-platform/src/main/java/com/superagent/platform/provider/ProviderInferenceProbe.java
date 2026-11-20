@@ -122,6 +122,7 @@ public class ProviderInferenceProbe {
         com.superagent.core.usage.TokenUsage used = switch (providerKey) {
             case "claude" -> checkClaude(modelId, credential);
             case "codex" -> checkCodex(modelId, credential);
+            case "grok" -> checkResponses(providerKey, modelId, credential);
             case "deepseek", "glm", "kimi", "qwen" -> checkVendor(providerKey, modelId, credential);
             default -> throw new IOException("Inference check is not available for " + providerKey + " yet");
         };
@@ -241,19 +242,7 @@ public class ProviderInferenceProbe {
      */
     private com.superagent.core.usage.TokenUsage checkCodex(String modelId, RunCredential credential) throws IOException, InterruptedException {
         if (credential != null) {
-            var entry = com.superagent.core.provider.ProviderCatalog.find("codex").orElseThrow();
-            ApiAccess access = ApiAccess.of(entry, credential).orElseThrow();
-            ObjectNode body = mapper.createObjectNode();
-            body.put("model", modelId);
-            body.put("input", PROMPT);
-            body.put("max_output_tokens", 16);
-            HttpResponse<String> resp = send(access.base(), access.authorizeBearer(HttpRequest.newBuilder(URI.create(access.base() + "/responses"))
-                    .timeout(Duration.ofSeconds(60)).header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))));
-            JsonNode u = mapper.readTree(resp.body()).path("usage");
-            long cached = u.path("input_tokens_details").path("cached_tokens").asLong(0);
-            return new com.superagent.core.usage.TokenUsage(modelId, Math.max(0, u.path("input_tokens").asLong(0) - cached), cached,
-                    0, 0, u.path("output_tokens").asLong(0), u.path("output_tokens_details").path("reasoning_tokens").asLong(0), null);
+            return checkResponses("codex", modelId, credential);
         }
         Path codex = probe.findBinary("codex").orElseThrow(() -> new IOException("codex is not installed"));
         // Read-only sandbox, prompt on stdin: the probe can't touch anything even if the model tried.
@@ -271,6 +260,30 @@ public class ProviderInferenceProbe {
             }
         }
         return new com.superagent.core.usage.TokenUsage(modelId, Math.max(0, in - cached), cached, 0, 0, outTokens, reasoning, null);
+    }
+
+    private com.superagent.core.usage.TokenUsage checkResponses(String providerKey, String modelId, RunCredential credential)
+            throws IOException, InterruptedException {
+        var entry = com.superagent.core.provider.ProviderCatalog.find(providerKey).orElseThrow();
+        ApiAccess access = ApiAccess.of(entry, credential).orElseThrow(() -> new IOException("还没有配置 API Key"));
+        ObjectNode body = mapper.createObjectNode();
+        body.put("model", modelId);
+        body.put("input", PROMPT);
+        body.put("max_output_tokens", 16);
+        if ("grok".equals(providerKey)) {
+            body.put("store", false);
+        }
+        HttpResponse<String> resp = send(access.base(), access.authorizeBearer(HttpRequest.newBuilder(URI.create(access.base() + "/responses"))
+                .timeout(Duration.ofSeconds(60)).header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))));
+        JsonNode response = mapper.readTree(resp.body());
+        if ("failed".equals(response.path("status").asText())) {
+            throw new IOException("Responses API returned a failed inference");
+        }
+        JsonNode u = response.path("usage");
+        long cached = u.path("input_tokens_details").path("cached_tokens").asLong(0);
+        return new com.superagent.core.usage.TokenUsage(modelId, Math.max(0, u.path("input_tokens").asLong(0) - cached), cached,
+                0, 0, u.path("output_tokens").asLong(0), u.path("output_tokens_details").path("reasoning_tokens").asLong(0), null);
     }
 
     // --- helpers ---

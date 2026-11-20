@@ -1,6 +1,14 @@
 package com.superagent.platform.provider;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.superagent.api.provider.ProviderModelDto;
+import com.superagent.core.chat.RunCredential;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,5 +37,51 @@ class ProviderInferenceProbeTest {
         // Plain output (Claude Code): its last lines.
         assertThat(ProviderInferenceProbe.cliFailure(1, "Starting\nError: Invalid API key · Please run /login\n"))
                 .isEqualTo("退出码 1：Starting\nError: Invalid API key · Please run /login");
+    }
+
+    @Test
+    void grokChecksTheKeyAndDiscoversAndProbesLanguageModels() throws Exception {
+        var authorization = new AtomicReference<String>();
+        var inference = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            try (exchange) {
+                authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                byte[] body = """
+                        {"data":[{"id":"grok-4.7"},{"id":"grok-imagine-video"},{"id":"grok-voice"}]}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.createContext("/v1/responses", exchange -> {
+            try (exchange) {
+                authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                inference.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                byte[] body = """
+                        {"status":"completed","usage":{"input_tokens":10,"output_tokens":4}}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        try {
+            var credential = new RunCredential("grok-credential", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                    "xai-test-key", false);
+            var probe = new ProviderInferenceProbe(null);
+            probe.checkKey("grok", null, credential);
+            assertThat(authorization.get()).isEqualTo("Bearer xai-test-key");
+
+            assertThat(new ProviderModelFetcher(null).fetch("grok", credential).models())
+                    .extracting(ProviderModelDto::id).containsExactly("grok-4.7");
+            probe.check("grok", "grok-4.7", credential);
+            var body = new ObjectMapper().readTree(inference.get());
+            assertThat(body.path("model").asText()).isEqualTo("grok-4.7");
+            assertThat(body.path("store").asBoolean(true)).isFalse();
+            assertThat(authorization.get()).isEqualTo("Bearer xai-test-key");
+        } finally {
+            server.stop(0);
+        }
     }
 }

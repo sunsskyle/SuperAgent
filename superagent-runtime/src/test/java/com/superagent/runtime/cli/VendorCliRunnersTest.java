@@ -4,7 +4,10 @@ import com.superagent.core.chat.AgentEventType;
 import com.superagent.core.chat.AgentRunRequest;
 import com.superagent.core.chat.RunCredential;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -68,6 +71,46 @@ class VendorCliRunnersTest {
     void qwenMcpConfigUsesStreamableHttp() {
         assertThat(QwenCliAgentRunner.mcpConfig(CodexCliAgentRunner.mcpServers(request("qwen3-coder-plus"))))
                 .contains("\"httpUrl\":\"http://127.0.0.1:18080/mcp\"").contains("\"Authorization\":\"Bearer turn-token\"");
+    }
+
+    @Test
+    void grokUsesCurrentKeyAndEndpointAndParsesHeadlessEvents(@TempDir Path runtime) throws Exception {
+        GrokCliAgentRunner runner = new GrokCliAgentRunner("grok", 60, runtime.toString());
+        AgentRunRequest request = request("grok-4.7");
+        List<Path> cleanup = new ArrayList<>();
+        try {
+            List<String> argv = runner.buildCommand(request, "previous-cli-session", cleanup);
+            assertThat(argv).containsSubsequence("--output-format", "streaming-messages-json")
+                    .containsSubsequence("--sandbox", "read-only")
+                    .containsSubsequence("--resume", "previous-cli-session")
+                    .doesNotContain("hi", "turn-token", "sk-test", "--always-approve");
+            assertThat(Files.readString(cleanup.getFirst())).isEqualTo("hi");
+        } finally {
+            for (Path file : cleanup) {
+                Files.deleteIfExists(file);
+            }
+        }
+        var environment = runner.environment(request);
+        assertThat(environment).containsEntry("XAI_API_KEY", "sk-test")
+                .containsEntry("SUPERAGENT_MCP_TOKEN_SUPERAGENT", "turn-token");
+        Path home = Path.of(environment.get("GROK_HOME"));
+        assertThat(Files.readString(home.resolve("config.toml"))).contains("model = \"grok-4.7\"",
+                "base_url = \"http://127.0.0.1:1\"", "Bearer ${SUPERAGENT_MCP_TOKEN_SUPERAGENT}")
+                .doesNotContain("sk-test", "turn-token");
+        assertThat(Files.readString(home.resolve("requirements.toml"))).contains("http://127.0.0.1:18080/mcp");
+
+        var parser = runner.newParser();
+        assertThat(parser.parse("""
+                {"type":"system","subtype":"init","session_id":"cli-session"}
+                """)).containsExactly(new JsonLineCliRunner.Line(AgentEventType.SYSTEM, "cli-session"));
+        assertThat(parser.parse("""
+                {"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}}
+                """)).containsExactly(new JsonLineCliRunner.Line(AgentEventType.TEXT, "hello"));
+        assertThat(parser.parse("""
+                {"type":"result","subtype":"success","result":"hello","usage":{"input_tokens":10,"cache_read_input_tokens":2,"output_tokens":4}}
+                """)).containsExactly(new JsonLineCliRunner.Line(AgentEventType.RESULT, "hello"));
+        assertThat(parser.tokens(request.model())).containsExactly(
+                new com.superagent.core.usage.TokenUsage("grok-4.7", 10, 2, 0, 0, 4, 0, null));
     }
 
     private static AgentRunRequest request(String model) {

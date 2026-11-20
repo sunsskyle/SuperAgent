@@ -77,6 +77,8 @@ public final class ProviderCatalog {
                     new Access(OPENAI, "https://api.moonshot.cn/v1", "KIMI_API_KEY", "KIMI_CODE_BASE_URL")),
             npmEntry("qwen", "Qwen Code", "qwen", true, "@qwen-code/qwen-code", "22.0.0", false, List.of(),
                     new Access(OPENAI, "https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY", null)),
+            npmEntry("grok", "Grok (xAI)", "grok", true, "@xai-official/grok", "20.0.0", false, List.of(),
+                    new Access(OPENAI, "https://api.x.ai/v1", "XAI_API_KEY", null)),
             // --- install-only: install / upgrade / version / keys from the Models page; not wired into tasks yet ---
             npmEntry("codebuddy", "CodeBuddy Code（腾讯）", "codebuddy", false, "@tencent-ai/codebuddy-code", "18.0.0", false,
                     List.of(), new Access(OTHER, null, "CODEBUDDY_API_KEY", "CODEBUDDY_BASE_URL")),

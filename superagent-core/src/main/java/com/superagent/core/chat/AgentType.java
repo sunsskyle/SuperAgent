@@ -12,6 +12,7 @@ public enum AgentType {
     KIMI("kimi"),
     DEEPSEEK("deepseek"),
     QWEN("qwen"),
+    GROK("grok"),
     /** Zhipu has no agent CLI: Claude Code, pointed at GLM's Anthropic-compatible endpoint. */
     GLM("glm");
 
